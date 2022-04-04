@@ -8,10 +8,14 @@ import argparse
 import numpy as np
 import torch
 
+from glob import glob
+# glob("/scratch_net/biwidl212/shecai/RealEstate10K-subset/train/frames/*/", recursive = False)
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description='Configs for LeReS')
-    parser.add_argument('--load_ckpt', default='./res50.pth', help='Checkpoint path to load')
+    parser.add_argument('--load_ckpt', default='/scratch_net/biwidl212/shecai/res101.pth', help='Checkpoint path to load')
     parser.add_argument('--backbone', default='resnext101', help='Checkpoint path to load')
 
     args = parser.parse_args()
@@ -47,31 +51,35 @@ if __name__ == '__main__':
     # load checkpoint
     load_ckpt(args, depth_model, None, None)
     depth_model.cuda()
+    image_dirs = glob("/scratch_net/biwidl212_second/shecai/RealEstate10K-subset/train/frames/*/", recursive = False)
+    # image_dir = os.path.dirname(os.path.dirname(__file__)) + '/test_images/'
+    for image_dir in image_dirs:
+        # image_dir = '/scratch_net/biwidl212/shecai/RealEstate10K-subset/train/frames/00a97cfa89150952'
+        print('processing video ' + image_dir[-17:], flush=True)
+        imgs_list = os.listdir(image_dir)
+        imgs_list.sort()
+        imgs_list = [k for k in imgs_list if 'output' not in k]
+        imgs_path = [os.path.join(image_dir, i) for i in imgs_list if i != 'outputs']
+        image_dir_out = image_dir + '/outputs'
+        os.makedirs(image_dir_out, exist_ok=True)
 
-    image_dir = os.path.dirname(os.path.dirname(__file__)) + '/test_images/'
-    imgs_list = os.listdir(image_dir)
-    imgs_list.sort()
-    imgs_path = [os.path.join(image_dir, i) for i in imgs_list if i != 'outputs']
-    image_dir_out = image_dir + '/outputs'
-    os.makedirs(image_dir_out, exist_ok=True)
+        for i, v in enumerate(imgs_path):
+            # print('processing (%04d)-th image... %s' % (i, v), flush=True)
+            rgb = cv2.imread(v)
+            rgb_c = rgb[:, :, ::-1].copy()
+            gt_depth = None
+            A_resize = cv2.resize(rgb_c, (448, 448))
+            # rgb_half = cv2.resize(rgb, (rgb.shape[1]//2, rgb.shape[0]//2), interpolation=cv2.INTER_LINEAR)
 
-    for i, v in enumerate(imgs_path):
-        print('processing (%04d)-th image... %s' % (i, v))
-        rgb = cv2.imread(v)
-        rgb_c = rgb[:, :, ::-1].copy()
-        gt_depth = None
-        A_resize = cv2.resize(rgb_c, (448, 448))
-        rgb_half = cv2.resize(rgb, (rgb.shape[1]//2, rgb.shape[0]//2), interpolation=cv2.INTER_LINEAR)
+            img_torch = scale_torch(A_resize)[None, :, :, :]
+            pred_depth = depth_model.inference(img_torch).cpu().numpy().squeeze()
+            pred_depth_ori = cv2.resize(pred_depth, (rgb.shape[1], rgb.shape[0]))
 
-        img_torch = scale_torch(A_resize)[None, :, :, :]
-        pred_depth = depth_model.inference(img_torch).cpu().numpy().squeeze()
-        pred_depth_ori = cv2.resize(pred_depth, (rgb.shape[1], rgb.shape[0]))
+            # if GT depth is available, uncomment the following part to recover the metric depth
+            #pred_depth_metric = recover_metric_depth(pred_depth_ori, gt_depth)
 
-        # if GT depth is available, uncomment the following part to recover the metric depth
-        #pred_depth_metric = recover_metric_depth(pred_depth_ori, gt_depth)
-
-        img_name = v.split('/')[-1]
-        cv2.imwrite(os.path.join(image_dir_out, img_name), rgb)
-        # save depth
-        plt.imsave(os.path.join(image_dir_out, img_name[:-4]+'-depth.png'), pred_depth_ori, cmap='rainbow')
-        cv2.imwrite(os.path.join(image_dir_out, img_name[:-4]+'-depth_raw.png'), (pred_depth_ori/pred_depth_ori.max() * 60000).astype(np.uint16))
+            img_name = v.split('/')[-1]
+            cv2.imwrite(os.path.join(image_dir_out, img_name), rgb)
+            # save depth
+            plt.imsave(os.path.join(image_dir_out, img_name[:-4]+'-depth.png'), pred_depth_ori, cmap='rainbow')
+            cv2.imwrite(os.path.join(image_dir_out, img_name[:-4]+'-depth_raw.png'), (pred_depth_ori/pred_depth_ori.max() * 60000).astype(np.uint16))
